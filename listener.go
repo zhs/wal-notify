@@ -23,7 +23,7 @@ type LogicalMessage struct {
 }
 
 // Handler is processing function for handling inserted records
-type Handler func(ctx context.Context, table string, values map[string][]byte, lsn pglogrepl.LSN) error
+type Handler func(ctx context.Context, table string, values map[string][]byte) error
 
 func (n *Notifier) listen(ctx context.Context, handler Handler) error {
 	var clientXLogPos pglogrepl.LSN
@@ -31,6 +31,7 @@ func (n *Notifier) listen(ctx context.Context, handler Handler) error {
 	standbyMessageTimeout := standbyTimeout
 	nextStandbyMessageDeadline := time.Now().Add(standbyMessageTimeout)
 	relations := map[uint32]*pglogrepl.RelationMessage{}
+	txchecker := &txChecker{}
 
 	for {
 		select {
@@ -39,13 +40,10 @@ func (n *Notifier) listen(ctx context.Context, handler Handler) error {
 		default:
 		}
 
+		// update standby status
 		if time.Now().After(nextStandbyMessageDeadline) {
-			err := pglogrepl.SendStandbyStatusUpdate(
-				ctx,
-				n.conn,
-				pglogrepl.StandbyStatusUpdate{WALWritePosition: clientXLogPos})
-			if err != nil {
-				return fmt.Errorf("WAL listener SendStandbyStatusUpdate failed: %w", err)
+			if err := ackMessage(ctx, n.conn, clientXLogPos); err != nil {
+				return fmt.Errorf("WAL listener send standby status update failed: %w", err)
 			}
 			nextStandbyMessageDeadline = time.Now().Add(standbyMessageTimeout)
 		}
@@ -55,7 +53,7 @@ func (n *Notifier) listen(ctx context.Context, handler Handler) error {
 			if pgconn.Timeout(err) {
 				continue
 			}
-			log.Error().Err(err).Msg("ReceiveMessage failed")
+			log.Error().Err(err).Msg("receive message failed")
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -81,32 +79,67 @@ func (n *Notifier) listen(ctx context.Context, handler Handler) error {
 			if err != nil {
 				return fmt.Errorf("parse XLogData failed: %w", err)
 			}
-			logicalMsg, err := pglogrepl.Parse(xld.WALData)
+			lMsg, err := pglogrepl.Parse(xld.WALData)
 			if err != nil {
 				return fmt.Errorf("parse logical replication message failed: %w", err)
 			}
 
-			// handling event from the DB
-			lsn, err := internalHandler(ctx, &LogicalMessage{
-				Message:    logicalMsg,
+			logicalMessage := &LogicalMessage{
+				Message:    lMsg,
 				Relations:  relations,
 				WALPointer: xld.WALStart,
-			}, handler)
+			}
+
+			// handling event from the DB
+			_, err = internalHandler(ctx, logicalMessage, handler)
 			if err != nil {
-				n.errs <- fmt.Errorf("error in event handler: %w", err)
+				log.Err(err).Msg("event handler")
+				txchecker.Clear()
 				continue
 			}
 
-			clientXLogPos = lsn
-
-			//
-			err = pglogrepl.SendStandbyStatusUpdate(
-				ctx,
-				n.conn,
-				pglogrepl.StandbyStatusUpdate{WALWritePosition: clientXLogPos})
-			if err != nil {
-				return fmt.Errorf("WAL listener SendStandbyStatusUpdate failed: %w", err)
+			// if event ok then ack
+			if txchecker.Inserted(logicalMessage) {
+				clientXLogPos = xld.WALStart
+				if err := ackMessage(ctx, n.conn, xld.WALStart); err != nil {
+					return fmt.Errorf("WAL listener send standby status update failed: %w", err)
+				}
 			}
 		}
 	}
+}
+
+type txChecker struct {
+	started  bool
+	inserted bool
+}
+
+func (c *txChecker) Inserted(lm *LogicalMessage) bool {
+	switch lm.Message.(type) {
+	case *pglogrepl.BeginMessage:
+		c.Clear()
+		c.started = true
+	case *pglogrepl.InsertMessage:
+		if c.started {
+			c.inserted = true
+		}
+	case *pglogrepl.CommitMessage:
+		if c.started && c.inserted {
+			c.Clear()
+			return true
+		}
+	}
+
+	return false
+}
+
+func (c *txChecker) Clear() {
+	c = &txChecker{}
+}
+
+func ackMessage(ctx context.Context, conn *pgconn.PgConn, lsn pglogrepl.LSN) error {
+	return pglogrepl.SendStandbyStatusUpdate(
+		ctx,
+		conn,
+		pglogrepl.StandbyStatusUpdate{WALWritePosition: lsn})
 }

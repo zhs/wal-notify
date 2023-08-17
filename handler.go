@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func internalHandler(ctx context.Context, logicalMessage *LogicalMessage, h Handler) (pglogrepl.LSN, error) {
+func internalHandler(ctx context.Context, logicalMessage *LogicalMessage, h Handler) (bool, error) {
 	switch lm := logicalMessage.Message.(type) {
 	case *pglogrepl.RelationMessage:
 		logicalMessage.Relations[lm.RelationID] = lm
@@ -16,7 +16,7 @@ func internalHandler(ctx context.Context, logicalMessage *LogicalMessage, h Hand
 	case *pglogrepl.InsertMessage:
 		rel, ok := logicalMessage.Relations[lm.RelationID]
 		if !ok {
-			return 0, fmt.Errorf("unknown relation ID %d", lm.RelationID)
+			return false, fmt.Errorf("unknown relation ID %d", lm.RelationID)
 		}
 		values := make(map[string][]byte, len(lm.Tuple.Columns))
 		for idx, col := range lm.Tuple.Columns {
@@ -31,11 +31,15 @@ func internalHandler(ctx context.Context, logicalMessage *LogicalMessage, h Hand
 			}
 		}
 
-		err := h(ctx, rel.RelationName, values, logicalMessage.WALPointer)
+		// run client handler
+		err := h(ctx, rel.RelationName, values)
 		if err != nil {
-			return 0, err
+			return ok, err
 		}
+
+	default:
+		return false, nil
 	}
 
-	return logicalMessage.WALPointer, nil
+	return true, nil
 }

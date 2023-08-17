@@ -18,9 +18,8 @@ Creating a new notifier:
     n, err := wal.NewNotifier(defaultOpts)
 
     // handler for processing record data.
-    handler := func(ctx context.Context, table string, values map[string][]byte, lsn pglogrepl.LSN) error {
+    handler := func(ctx context.Context, table string, values map[string][]byte) error {
         // "values" is a map of fields of DB record: [column_name]:[data]
-        // "lsn" is record ID	
         ...
     }
 

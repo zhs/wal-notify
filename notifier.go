@@ -23,7 +23,6 @@ type Options struct {
 type Notifier struct {
 	opts *Options
 	conn *pgconn.PgConn
-	errs chan error
 }
 
 func NewNotifier(opts *Options) (*Notifier, error) {
@@ -34,7 +33,6 @@ func NewNotifier(opts *Options) (*Notifier, error) {
 
 	n := Notifier{
 		opts: opts,
-		errs: make(chan error),
 	}
 
 	return &n, nil
@@ -56,8 +54,4 @@ func (n *Notifier) Listen(ctx context.Context, handler Handler) error {
 	}
 
 	return nil
-}
-
-func (n *Notifier) ErrsChan() <-chan error {
-	return n.errs
 }
