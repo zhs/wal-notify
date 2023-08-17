@@ -1,6 +1,9 @@
-# WAL-Notifier
+# WAL-Notifier 0.1
 
 The notifier is used for processing INSERTED records into the Postgres table.
+
+Returning an error from the handler is only necessary as a guarantee that processing will continue from that event after the notifiers crash.
+All error handling should be done on the handler side, since events will continue to arrive despite the returned error.
 
 Creating a new notifier:
 

@@ -25,6 +25,7 @@ type Notifier struct {
 	conn *pgconn.PgConn
 }
 
+// NewNotifier creates new notifier
 func NewNotifier(opts *Options) (*Notifier, error) {
 	err := Validator.Struct(opts)
 	if err != nil {
@@ -38,6 +39,7 @@ func NewNotifier(opts *Options) (*Notifier, error) {
 	return &n, nil
 }
 
+// Listen connects to Posgres and starts to listen to table events
 func (n *Notifier) Listen(ctx context.Context, handler Handler) error {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
