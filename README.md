@@ -1,4 +1,4 @@
-# WAL-Notifier 0.1
+# WAL-Notifier 0.2
 
 The notifier is used for processing INSERTED records into the Postgres table.
 

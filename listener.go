@@ -59,7 +59,7 @@ func (n *Notifier) listen(ctx context.Context, handler Handler) error {
 		}
 
 		if errMsg, ok := rawMsg.(*pgproto3.ErrorResponse); ok {
-			log.Fatal().Interface("err msg", errMsg).Msg("received Postgres WAL error")
+			return fmt.Errorf("received Postgres WAL error: %+v\n", errMsg)
 		}
 
 		msg, ok := rawMsg.(*pgproto3.CopyData)
